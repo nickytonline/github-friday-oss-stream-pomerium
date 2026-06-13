@@ -1,0 +1,94 @@
+services:
+  pomerium:
+    image: pomerium/pomerium:git-1c02ad61
+    container_name: pomerium
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"       # autocert HTTP-01 challenge
+      - "443:443"     # HTTPS proxy
+      - "2200:22"     # native SSH proxy (host 2200 -> container 22)
+    volumes:
+      - ./config:/pomerium:ro
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - pomerium-demo
+
+  verify:
+    image: pomerium/verify:sha-d6fc5cb
+    container_name: pomerium-verify
+    restart: unless-stopped
+    networks:
+      - pomerium-demo
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - pomerium-demo
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /:/rootfs:ro
+    networks:
+      - pomerium-demo
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_AUTH_PROXY_ENABLED: 'true'
+      GF_AUTH_PROXY_HEADER_NAME: X-Pomerium-Claim-Email
+      GF_AUTH_PROXY_HEADER_PROPERTY: email
+      GF_AUTH_PROXY_HEADERS: 'Name:X-Pomerium-Claim-Name'
+      GF_AUTH_PROXY_AUTO_SIGN_UP: 'true'
+      GF_AUTH_PROXY_SYNC_TTL: '60'
+      GF_AUTH_PROXY_WHITELIST: '172.18.0.0/16'
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_AUTH_BASIC_ENABLED: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_AUTH_SIGNOUT_REDIRECT_URL: https://grafana.your-domain.com/.pomerium/sign_out
+      GF_USERS_AUTO_ASSIGN_ORG: 'true'
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: 'Editor'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_SECURITY_ADMIN_EMAIL: 'your-email@example.com'
+      GF_SECURITY_ALLOW_EMBEDDING: 'true'
+      GF_SERVER_ROOT_URL: https://grafana.your-domain.com
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - pomerium-demo
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  pomerium-demo:
+    name: pomerium-demo

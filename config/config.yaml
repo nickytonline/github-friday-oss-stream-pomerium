@@ -1,0 +1,129 @@
+# Pomerium Core configuration
+# - Auth: hosted authenticate on our own subdomain (required for native SSH).
+# - TLS: autocert via Let's Encrypt.
+# - Databroker: file-backed Pebble store.
+# - Secrets come from .env (see ${...} substitutions below).
+
+# Proxy HTTPS listener (also handles autocert HTTP-01 on :80)
+address: ':443'
+
+# Authenticate service hosted by this Pomerium instance, on our own subdomain.
+# Putting authenticate on a non-*.pomerium.app domain takes us out of the
+# stateless flow (see pkg/ssh/auth.go: UseStatelessAuthenticateFlow gate),
+# which is what unlocks native SSH login.
+authenticate_service_url: https://authenticate.your-domain.com
+
+# Use Pomerium's hosted identity provider — no IdP client_id/secret needed.
+# (The "hosted" provider is registered in v0.32.7+ for this use case.)
+idp_provider: hosted
+
+log_level: info
+
+# Runtime feature flags
+runtime_flags:
+  mcp: true                     # enable MCP services
+  ssh_allow_direct_tcpip: true  # OpenSSH direct-tcpip channels (ssh -L, -J ProxyJump)
+  ssh_upstream_tunnel: true     # enable reverse SSH tunnel routes
+  ssh_routes_portal: true       # interactive route picker on `ssh user@proxy`
+
+# Allow-listed domains for MCP Client ID Metadata Documents (CIMD).
+# Pomerium fetches the OAuth client metadata from the client_id URL; the URL's
+# domain must match an entry here or the authorize request 401s before any
+# user-login redirect. Supports wildcards (e.g. "*.example.com").
+mcp_allowed_client_id_domains:
+  - chatgpt.com
+  - claude.ai
+  - vscode.dev
+  - openai.com
+
+# TLS / Let's Encrypt
+autocert: true
+autocert_use_staging: false   # flip to true if you need to iterate without burning prod rate-limit budget
+autocert_dir: /data/autocert
+
+shared_secret: ${SHARED_SECRET}
+cookie_secret: ${COOKIE_SECRET}
+signing_key: ${SIGNING_KEY}
+
+# Map JWT claims to HTTP headers so upstream apps (Grafana auth proxy) can read
+# the authenticated user's identity without parsing the JWT themselves.
+jwt_claims_headers:
+  X-Pomerium-Claim-Email: email
+  X-Pomerium-Claim-Name: name
+
+# File-based databroker (Pebble KV store)
+databroker_storage_type: file
+databroker_storage_connection_string: file:///data/databroker
+
+# Native SSH proxy
+ssh_address: '0.0.0.0:22'
+ssh_user_ca_key_file: /pomerium/pomerium_user_ca_key
+ssh_host_key_files:
+  - /pomerium/ssh_host_keys/pomerium_ssh_host_ed25519_key
+  - /pomerium/ssh_host_keys/pomerium_ssh_host_rsa_key
+  - /pomerium/ssh_host_keys/pomerium_ssh_host_ecdsa_key
+
+routes:
+  # SSH into this host gated to your-email@example.com only.
+  # Route uses a short name so the client command stays compact:
+  #   ssh demo@jump@ssh.your-domain.com -p 2200
+  # (linux_user @ route_name @ proxy_host)
+  # note the linux user needs to exist on the host you're connecting to. Pomerium will not create it.
+  - from: ssh://jump
+    to: ssh://host.docker.internal:22
+    policy:
+      - allow:
+          and:
+            - email:
+                is: your-email@example.com
+
+  # MCP development route
+  # You can use https://github.com/nickytonline/mcp-typescript-template to scaffold an MCP server.
+  - from: https://devmcp.your-domain.com
+    to: http://localhost:3000
+    mcp:
+      server: {}                       # this route serves a Model Context Protocol server
+    policy:                            # who can access the remote MCP server
+      - allow:
+          and:
+            - email:
+                is: your-email@example.com
+    upstream_tunnel:
+      ssh_policy:                      # who can REGISTER the reverse tunnel
+        - allow:
+            and:
+              - email:
+                  is: your-email@example.com
+
+  # generic http route (non-mcp) for local development
+  - from: https://dev.your-domain.com
+    to: http://localhost:3000
+    policy:                            # who can VISIT the public HTTPS URL
+      - allow:
+          and:
+            - email:
+                is: your-email@example.com
+    upstream_tunnel:
+      ssh_policy:                      # who can REGISTER the reverse tunnel
+        - allow:
+            and:
+              - email:
+                  is: your-email@example.com
+
+  - from: https://verify.your-domain.com
+    to: http://verify:8000
+    pass_identity_headers: true
+    policy:
+      - allow:
+          and:
+            - email:
+                is: your-email@example.com
+
+  - from: https://grafana.your-domain.com
+    to: http://grafana:3000
+    pass_identity_headers: true
+    policy:
+      - allow:
+          and:
+            - email:
+                is: your-email@example.com

@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.local
+*.pem
+
+# Generated SSH host keys + user CA (keep public keys out too —
+# they are tied to a specific deployment)
+config/pomerium_user_ca_key
+config/pomerium_user_ca_key.pub
+config/ssh_host_keys/
+
+# Runtime state mounted into the container
+data/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+.devin
